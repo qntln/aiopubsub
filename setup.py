@@ -1,4 +1,5 @@
 import os
+
 from setuptools import setup
 
 
@@ -21,6 +22,9 @@ setup(
 		'aiopubsub',
 		'aiopubsub.testing',
 	],
+	py_modules = [
+		'aiopubsub.utils',
+	],
 	extras_require = {
 		'logwood': ['logwood>=3.1.0,<4.0.0'],
 	},
@@ -29,6 +33,6 @@ setup(
 		'License :: OSI Approved :: Apache Software License',
 		'Natural Language :: English',
 		'Programming Language :: Python :: 3 :: Only',
-		'Programming Language :: Python :: 3.5',
+		'Programming Language :: Python :: 3.6',
 	]
 )

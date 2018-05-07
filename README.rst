@@ -3,10 +3,7 @@ aiopubsub - asyncio publish-subscribe within a process
 
 Simple pubsub pattern for asyncio applications.
 
-Aiopubsub will use `logwood <https://github.com/qntln/logwood>`_ if it is installed, otherwise it will default
-to the standard logging module.
-
-Aiopubsub is only tested with Python 3.5. There are no plans to support older versions.
+aiopubsub is only tested with Python 3.6. There are no plans to support older versions.
 
 
 .. code-block:: python
@@ -21,12 +18,8 @@ Aiopubsub is only tested with Python 3.5. There are no plans to support older ve
 		publisher = aiopubsub.Publisher(hub, prefix = aiopubsub.Key('a'))
 		subscriber = aiopubsub.Subscriber(hub, 'subscriber_id')
 
-		def print_message(key, message):
-			print(key, message)
-
 		sub_key = aiopubsub.Key('a', 'b', '*')
 		subscriber.subscribe(sub_key)
-		subscriber.add_listener(sub_key, print_message)
 
 		pub_key = aiopubsub.Key('b', 'c')
 		publisher.publish(pub_key, 'Hello subscriber')
@@ -42,23 +35,53 @@ Aiopubsub is only tested with Python 3.5. There are no plans to support older ve
 
 	asyncio.get_event_loop().run_until_complete(main())
 
+or, instead of directly subscribing to the key, we can create a listener that will call a synchronous callback
+when a new message arrives.
+
+.. code-block:: python
+
+	def print_message(key, message):
+		print(key, message)
+
+	subscriber.add_sync_listener(sub_key, print_message)
+
+Or, if we have a coroutine callback we can create an asynchronous listener:
+
+.. code-block:: python
+
+	async def print_message(key, message):
+		await asyncio.sleep(1)
+		print(key, message)
+
+	subscriber.add_async_listener(sub_key, print_message)
+
+
+Aiopubsub will use `logwood <https://github.com/qntln/logwood>`_ if it is installed, otherwise it will default
+to the standard logging module. Note that ``logwood`` is required to run tests.
+
 
 Architecture
 ------------
 
 **Hub** accepts messages from **Publishers** and routes them to **Subscribers**. Each message is routed by its
-**Key** – an iterable of strings forming a hierarchic namespace. Subscribers may subscribe to wildcard keys,
-where any part of the key is replaced with a :code:`*` (star).
+**Key** - an iterable of strings forming a hierarchic namespace. Subscribers may subscribe to wildcard keys,
+where any part of the key may be replaced replaced with a ``*`` (star).
 
-A subscriber may consume messages through a coroutine-based API...
+``addedSubscriber`` and ``removedSubscriber`` messages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. code-block:: python
+When a new subscriber is added the Hub sends this message
 
-	subscriber.subscribe(subscription_key)
-	await subscriber.consume()
+.. code-block::
 
-...or through a callback-based API.
+	{
+		"key": ("key", "of", "added", "subscriber"),
+		"currentSubscriberCount": 2
+	}
 
-.. code-block:: python
+under the key ``('Hub', 'addedSubscriber', 'key', 'of', 'added', 'subscriber')`` (the part after ``addedSubscriber``
+is made of the subscribed key). Note the ``currentSubscriberCount`` field indicating how many subscribers are currently
+subscribed.
 
-	subscriber.add_listener(subscription_key, callback_on_message)
+When a subscriber is removed a message in the same format is sent, but under the key
+``('Hub', 'removedSubscriber', 'key', 'of', 'added', 'subscriber')``.

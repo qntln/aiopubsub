@@ -1,11 +1,14 @@
 import asyncio
+
 import pytest
 
 import aiopubsub.testing.mocks
 
+# pylint: disable=no-self-use, protected-access
 
 
-class Test01Key:
+
+class TestKey:
 	def test_is_wildcard(self):
 		assert not aiopubsub.Key('a').is_wildcard
 		assert not aiopubsub.Key('a', 'b', 'c').is_wildcard
@@ -57,86 +60,114 @@ class Test01Key:
 
 
 
-class Test02Hub:
+class TestHub:
 
 	@pytest.fixture
 	def hub(self):
 		return aiopubsub.Hub()
 
-	def test_01_add_subscriber(self, hub):
+
+	@pytest.fixture
+	def data(self):
+		return []
+
+
+	@pytest.fixture
+	def callback(self, data):
+		return lambda key, message: data.append((key, message))
+
+
+	def test_add_subscriber(self, hub, data, callback):
 		'''
 		Subscriber receives messages after being added.
 		'''
 		k = aiopubsub.Key('a', 'b')
-		q = aiopubsub.testing.mocks.MockAsyncQueue()
-		hub.add_subscriber(k, q)
-		hub.publish(k, 'message')
-		assert q.data == [(k, 'message')]
+		hub.add_subscriber(k, callback)
+		hub.publish(k, 'message1')
+		assert data == [(k, 'message1')]
 
 
-	def test_02_remove_subscriber(self, hub):
+	def test_remove_subscriber(self, hub, data, callback):
 		'''
 		No message is received after the subscriber is removed.
 		'''
 		k = aiopubsub.Key('a', 'b')
-		q = aiopubsub.testing.mocks.MockAsyncQueue()
-		hub.add_subscriber(k, q)
-		hub.remove_subscriber(k, q)
-		hub.publish(k, 'message')
-		assert q.data == []
+		hub.add_subscriber(k, callback)
+		hub.publish(k, 'message1')
+		hub.remove_subscriber(k, callback)
+		hub.publish(k, 'message2')
+		assert data == [(k, 'message1')]
 
 
-	def test_03_has_subscribers(self, hub):
+	def test_has_subscribers(self, hub, callback):
 		k = aiopubsub.Key('a', 'b')
-		q = aiopubsub.testing.mocks.MockAsyncQueue()
 		# No subs at first
 		assert not hub.has_subscribers()
 		assert not hub.has_subscribers(k)
 		# Add one subscriber
-		hub.add_subscriber(k, q)
+		hub.add_subscriber(k, callback)
 		assert hub.has_subscribers()
 		assert hub.has_subscribers(k)
 		# No subs for a different key
 		assert not hub.has_subscribers(aiopubsub.Key('a', 'x'))
 		# Remove the subscriber => no subs again.
-		hub.remove_subscriber(k, q)
+		hub.remove_subscriber(k, callback)
 		assert not hub.has_subscribers()
 		assert not hub.has_subscribers(k)
 
 
-	def test_04_publish_multi(self, hub):
+	def test_publish_multi(self, hub):
 		'''
 		Multiple subscribers to the same key receive the same message.
 		'''
+		data1 = []
+		data2 = []
+		def callback1(k, m):
+			data1.append((k, m))
+		def callback2(k, m):
+			data2.append((k, m))
 		k = aiopubsub.Key('a', 'b')
-		q1 = aiopubsub.testing.mocks.MockAsyncQueue()
-		q2 = aiopubsub.testing.mocks.MockAsyncQueue()
-		hub.add_subscriber(k, q1)
-		hub.add_subscriber(k, q2)
+		hub.add_subscriber(k, callback1)
+		hub.add_subscriber(k, callback2)
 		hub.publish(k, 'message')
-		assert q1.data == [(k, 'message')]
-		assert q2.data == [(k, 'message')]
+		assert data1 == [(k, 'message')]
+		assert data2 == [(k, 'message')]
 
 
-	def test_04_publish_wildcard(self, hub):
-		q = aiopubsub.testing.mocks.MockAsyncQueue()
+	def test_publish_wildcard(self, hub, data, callback):
 		k1 = aiopubsub.Key('a', 'b')
 		k2 = aiopubsub.Key('a', 'x')
-		hub.add_subscriber(aiopubsub.Key('a', '*'), q)
+		hub.add_subscriber(aiopubsub.Key('a', '*'), callback)
 		hub.publish(k1, 'message')
-		assert q.data == [(k1, 'message')]
+		assert data == [(k1, 'message')]
 		hub.publish(k2, 'message2')
-		assert q.data == [(k1, 'message'), (k2, 'message2')]
+		assert data == [(k1, 'message'), (k2, 'message2')]
 		# Different key
 		hub.publish(aiopubsub.Key('b', 'b'), 'message3')
-		assert q.data == [(k1, 'message'), (k2, 'message2')]
+		assert data == [(k1, 'message'), (k2, 'message2')]
+
+
+	def test_cache_invalidation_wildcard(self, hub):
+		data1 = []
+		data2 = []
+		def callback1(k, m):
+			data1.append((k, m))
+		def callback2(k, m):
+			data2.append((k, m))
+		k = aiopubsub.Key('a', 'b')
+		hub.add_subscriber(aiopubsub.Key('*', 'b'), callback1)
+		hub.publish(k, 'message')
+		hub.add_subscriber(aiopubsub.Key('a', 'b'), callback2)
+		hub.publish(k, 'message2')
+		assert data1 == [(k, 'message'), (k, 'message2')]
+		assert data2 == [(k, 'message2')]
 
 
 	# TODO: test Hub status messages (addedSubscriber etc.)
 
 
 
-class Test03Publisher:
+class TestPublisher:
 
 	@pytest.fixture
 	def hub(self):
@@ -148,7 +179,7 @@ class Test03Publisher:
 		return aiopubsub.Publisher(hub, 'Tester')
 
 
-	def test_01_publish(self, hub, publisher):
+	def test_publish(self, hub, publisher):
 		'''
 		Publisher ID must be prepended to the key.
 		'''
@@ -156,7 +187,7 @@ class Test03Publisher:
 		assert hub.published == [(aiopubsub.Key('Tester', 'a', 'b'), 'message')]
 
 
-	def test_02_has_subscribers(self, hub, publisher):
+	def test_has_subscribers(self, hub, publisher):
 		k1 = aiopubsub.Key('a', 'b')
 		k2 = aiopubsub.Key('a', 'x')
 		assert not publisher.has_subscribers()
@@ -169,11 +200,11 @@ class Test03Publisher:
 
 
 
-class Test04Subscriber:
+class TestSubscriber:
 
 	@pytest.fixture
 	def hub(self):
-		return aiopubsub.testing.mocks.MockHub()
+		return aiopubsub.Hub()
 
 
 	@pytest.fixture
@@ -181,22 +212,37 @@ class Test04Subscriber:
 		return aiopubsub.Subscriber(hub, 'Tester')
 
 
-	def test_01_subscribe_unsubscribe(self, hub, subscriber):
+	@pytest.fixture
+	def data(self):
+		return []
+
+
+	@pytest.fixture(params = ['sync', 'async'])
+	def callback(self, data, request):
+		if request.param == 'sync':
+			def callback(k, m):
+				data.append((k, m))
+		else:
+			async def callback(k, m):
+				data.append((k, m))
+		return callback
+
+
+	def test_subscribe_unsubscribe(self, hub, subscriber):
 		k = aiopubsub.Key('a', 'b')
-		subscriber.subscribe(k)
-		assert len(hub.subscribers) == 1
-		assert len(hub.subscribers[k]) == 1
+		subscriber.async_subscribe(k)
+		assert len(hub._subscribers) == 1
+		assert len(hub._subscribers[k]) == 1
 		subscriber.unsubscribe(k)
-		assert not hub.subscribers[k]
+		assert not hub._subscribers[k]
 
 
 	@pytest.mark.asyncio
-	async def test_02_consume(self, hub, subscriber):
+	async def test_consume(self, hub, subscriber):
 		k = aiopubsub.Key('a', 'b')
-		subscriber.subscribe(k)
-		q = hub.subscribers[k][0]
-		q.put_nowait((k, 'message1'))
-		q.put_nowait((k, 'message2'))
+		subscriber.async_subscribe(k)
+		hub.publish(k, 'message1')
+		hub.publish(k, 'message2')
 		consumed = await subscriber.consume()
 		assert consumed == (k, 'message1')
 		consumed = await subscriber.consume()
@@ -204,71 +250,160 @@ class Test04Subscriber:
 
 
 	@pytest.mark.asyncio
-	async def test_03_add_listener_remove_listener(self, hub, subscriber):
-		data = []
-		def callback(k, m):
-			data.append((k, m))
+	async def test_add_listener_remove_listener(self, hub, subscriber, callback, data):
 		k = aiopubsub.Key('a', 'b')
-		subscriber.add_listener(k, callback)
-		q = hub.subscribers[k][0]
+		if asyncio.iscoroutinefunction(callback):
+			subscriber.add_async_listener(k, callback)
+		else:
+			subscriber.add_sync_listener(k, callback)
 		# Callback must be fired on every message.
-		q.put_nowait((k, 'message1'))
+		hub.publish(k, 'message1')
 		await asyncio.sleep(0.001)
 		assert data == [(k, 'message1')]
-		q.put_nowait((k, 'message2'))
+		hub.publish(k, 'message2')
 		await asyncio.sleep(0.001)
 		assert data, [(k, 'message1') == (k, 'message2')]
 		# No more firings after the listener is removed.
-		subscriber.remove_listener(k, callback)
-		q.put_nowait((k, 'message3'))
+		await subscriber.remove_listener(k, callback)
+		hub.publish(k, 'message3')
 		await asyncio.sleep(0.01)
 		assert data == [(k, 'message1'), (k, 'message2')]
 
 
 	@pytest.mark.asyncio
-	async def test_04_add_listener_remove_listener_multiple_keys(self, hub, subscriber):
-		data = []
-		def callback(k, m):
-			data.append((k, m))
+	async def test_add_listener_remove_listener_multiple_keys(self, hub, subscriber, callback, data):
 		k1 = aiopubsub.Key('a', 'b')
 		k2 = aiopubsub.Key('a', 'x')
-		subscriber.add_listener({k1, k2}, callback)
-		# Both keys must be read by the same queue.
-		assert hub.subscribers[k1][0] is hub.subscribers[k2][0]
-		q = hub.subscribers[k1][0]
+		if asyncio.iscoroutinefunction(callback):
+			subscriber.add_async_listener({k1, k2}, callback)
+		else:
+			subscriber.add_sync_listener({k1, k2}, callback)
+		# In asynchronous case both keys must be read by the same callback
+		assert hub._subscribers[k1][0] is hub._subscribers[k2][0]
 		# Callback must be fired on every message.
-		q.put_nowait((k1, 'message1'))
+		hub.publish(k1, 'message1')
 		await asyncio.sleep(0.001)
 		assert data == [(k1, 'message1')]
-		q.put_nowait((k2, 'message2'))
+		hub.publish(k2, 'message2')
 		await asyncio.sleep(0.001)
 		assert data == [(k1, 'message1'), (k2, 'message2')]
 		# No more firings after the listener is removed.
-		subscriber.remove_listener({k1, k2}, callback)
-		q.put_nowait((k1, 'message3'))
+		await subscriber.remove_listener({k1, k2}, callback)
+		hub.publish(k1, 'message3')
 		await asyncio.sleep(0.01)
 		assert data == [(k1, 'message1'), (k2, 'message2')]
-		q.put_nowait((k2, 'message4'))
+		hub.publish(k2, 'message4')
 		await asyncio.sleep(0.01)
 		assert data == [(k1, 'message1'), (k2, 'message2')]
 		# Queues are removed.
-		assert hub.subscribers[k1] == []
-		assert hub.subscribers[k2] == []
+		assert hub._subscribers[k1] == []
+		assert hub._subscribers[k2] == []
+
 
 	@pytest.mark.asyncio
-	async def test_05_remove_all_listeners(self, subscriber):
+	async def test_remove_all_listeners(self, subscriber):
 		data = []
-		def callback(k, m):
+		def sync_callback(k, m):
+			data.append((k, m))
+		async def async_callback(k, m):
 			data.append((k, m))
 		# nothing happens when listeners are empty
-		assert len(subscriber._listeners) == 0
-		subscriber.remove_all_listeners()
-		assert len(subscriber._listeners) == 0
+		assert not bool(subscriber._listeners)
+		await subscriber.remove_all_listeners()
+		assert not bool(subscriber._listeners)
+		# removes all present sync listeners
+		k1 = aiopubsub.Key('a', 'b')
+		k2 = aiopubsub.Key('a', 'x')
+		subscriber.add_sync_listener(k1, sync_callback)
+		subscriber.add_sync_listener(k2, sync_callback)
+		assert len(subscriber._listeners) == 2
+		await subscriber.remove_all_listeners()
+		assert not bool(subscriber._listeners)
 		# removes all present listeners
 		k1 = aiopubsub.Key('a', 'b')
 		k2 = aiopubsub.Key('a', 'x')
-		subscriber.add_listener(k1, callback)
-		subscriber.add_listener(k2, callback)
+		subscriber.add_sync_listener(k1, sync_callback)
+		subscriber.add_async_listener(k2, async_callback)
 		assert len(subscriber._listeners) == 2
-		subscriber.remove_all_listeners()
-		assert len(subscriber._listeners) == 0
+		await subscriber.remove_all_listeners()
+		assert not bool(subscriber._listeners)
+
+
+
+@pytest.mark.asyncio
+async def test_get_queue_size():
+	testcase = {
+		('a',): 1,
+		('a', 'b',): 2,
+		('a', 'b', 'c',): 3,
+		('x', 'b',): 8,
+		('x', 'c',): 12,
+		('x',): 16,
+	}
+
+	hub = aiopubsub.Hub()
+	subscriber = aiopubsub.Subscriber(hub, 'Tester')
+	data = []
+	async def callback(k, m):
+		data.append((k, m))
+
+	for key, messages_count in testcase.items():
+		k = aiopubsub.Key(*key)
+		subscriber.add_async_listener(k, callback)
+		subscriber._get_listener_subscription(key, callback)
+
+		for _ in range(messages_count):
+			hub.publish(k, 'message')
+
+		#Immediately after publishing queues should be full.
+		assert sum(hub.get_subscriber_queue_sizes(k)) == messages_count
+		await asyncio.sleep(0.01)
+		#After time messages are consumed.
+		assert sum(hub.get_subscriber_queue_sizes(k)) == 0
+
+
+
+@pytest.mark.asyncio
+async def test_sync_and_async_listeners():
+	hub = aiopubsub.Hub()
+	subscriber = aiopubsub.Subscriber(hub, 'Tester')
+
+	data_sync = []
+	data_async = []
+	def sync_callback(k, m):
+		data_sync.append((k, m))
+	async def async_callback(k, m):
+		data_async.append((k, m))
+	k = aiopubsub.Key('a', 'b')
+	subscriber.add_sync_listener(k, sync_callback)
+	subscriber.add_async_listener(k, async_callback)
+
+	hub.publish(k, 'message1')
+	await asyncio.sleep(0.001)
+	assert data_sync == [(k, 'message1')]
+	assert data_async == [(k, 'message1')]
+	hub.publish(k, 'message2')
+	await asyncio.sleep(0.001)
+	assert data_sync, [(k, 'message1'), (k, 'message2')]
+	assert data_async, [(k, 'message1'), (k, 'message2')]
+	## No more firings after the listener is removed.
+	await subscriber.remove_listener(k, sync_callback)
+	await subscriber.remove_listener(k, async_callback)
+	hub.publish(k, 'message3')
+	await asyncio.sleep(0.01)
+	assert data_sync == [(k, 'message1'), (k, 'message2')]
+	assert data_async == [(k, 'message1'), (k, 'message2')]
+
+
+
+@pytest.mark.asyncio
+async def test_remove_listeners_race_condition():
+	hub = aiopubsub.Hub()
+	subscriber = aiopubsub.Subscriber(hub, 'Tester')
+
+	for idx in range(10):
+		subscriber.add_sync_listener(aiopubsub.Key('a', idx), lambda *_: None)
+
+	future = asyncio.ensure_future(subscriber.remove_all_listeners())
+	future2 = asyncio.ensure_future(subscriber.remove_all_listeners())
+	await asyncio.wait([future, future2])
